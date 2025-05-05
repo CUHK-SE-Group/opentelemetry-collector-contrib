@@ -21,10 +21,14 @@ import (
 //go:embed sql/logs_ddl.sql
 var logsDDL string
 
+//go:embed sql/logs_view.sql
+var logsView string
+
 // dLog Log to Doris
 type dLog struct {
 	ServiceName        string         `json:"service_name"`
 	Timestamp          string         `json:"timestamp"`
+	ServiceInstanceID  string         `json:"service_instance_id"`
 	TraceID            string         `json:"trace_id"`
 	SpanID             string         `json:"span_id"`
 	SeverityNumber     int32          `json:"severity_number"`
@@ -65,10 +69,16 @@ func (e *logsExporter) start(ctx context.Context, host component.Host) error {
 			return err
 		}
 
-		ddl := fmt.Sprintf(logsDDL, e.cfg.Table.Logs, e.cfg.propertiesStr())
+		ddl := fmt.Sprintf(logsDDL, e.cfg.Logs, e.cfg.propertiesStr())
 		_, err = conn.ExecContext(ctx, ddl)
 		if err != nil {
 			return err
+		}
+
+		view := fmt.Sprintf(logsView, e.cfg.Logs, e.cfg.Logs)
+		_, err = conn.ExecContext(ctx, view)
+		if err != nil {
+			e.logger.Warn("failed to create materialized view", zap.Error(err))
 		}
 	}
 
@@ -84,7 +94,7 @@ func (e *logsExporter) shutdown(_ context.Context) error {
 }
 
 func (e *logsExporter) pushLogData(ctx context.Context, ld plog.Logs) error {
-	label := generateLabel(e.cfg, e.cfg.Table.Logs)
+	label := generateLabel(e.cfg, e.cfg.Logs)
 	logs := make([]*dLog, 0, ld.LogRecordCount())
 
 	for i := 0; i < ld.ResourceLogs().Len(); i++ {
@@ -96,6 +106,11 @@ func (e *logsExporter) pushLogData(ctx context.Context, ld plog.Logs) error {
 		if ok {
 			serviceName = v.AsString()
 		}
+		serviceInstance := ""
+		v, ok = resourceAttributes.Get(semconv.AttributeServiceInstanceID)
+		if ok {
+			serviceInstance = v.AsString()
+		}
 
 		for j := 0; j < resourceLogs.ScopeLogs().Len(); j++ {
 			scopeLogs := resourceLogs.ScopeLogs().At(j)
@@ -106,6 +121,7 @@ func (e *logsExporter) pushLogData(ctx context.Context, ld plog.Logs) error {
 				log := &dLog{
 					ServiceName:        serviceName,
 					Timestamp:          e.formatTime(logRecord.Timestamp().AsTime()),
+					ServiceInstanceID:  serviceInstance,
 					TraceID:            traceutil.TraceIDToHexOrEmptyString(logRecord.TraceID()),
 					SpanID:             traceutil.SpanIDToHexOrEmptyString(logRecord.SpanID()),
 					SeverityNumber:     int32(logRecord.SeverityNumber()),
@@ -131,7 +147,7 @@ func (e *logsExporter) pushLogDataInternal(ctx context.Context, logs []*dLog, la
 		return err
 	}
 
-	req, err := streamLoadRequest(ctx, e.cfg, e.cfg.Table.Logs, marshal, label)
+	req, err := streamLoadRequest(ctx, e.cfg, e.cfg.Logs, marshal, label)
 	if err != nil {
 		return err
 	}

@@ -49,6 +49,7 @@ func TestLoadConfig(t *testing.T) {
 			id: component.NewIDWithName(metadata.Type, "full"),
 			expected: &Config{
 				collectorVersion: "unknown",
+				driverName:       clickhouseDriverName,
 				Endpoint:         defaultEndpoint,
 				Database:         "otel",
 				Username:         "foo",
@@ -81,11 +82,12 @@ func TestLoadConfig(t *testing.T) {
 					Frames:   "otel_profiles_frames",
 				},
 				ConnectionParams: map[string]string{},
-				QueueSettings: exporterhelper.QueueConfig{
+				QueueSettings: exporterhelper.QueueBatchConfig{
 					Enabled:      true,
 					NumConsumers: 10,
 					QueueSize:    100,
 					StorageID:    &storageID,
+					Sizer:        exporterhelper.RequestSizerTypeRequests,
 				},
 				AsyncInsert: true,
 			},

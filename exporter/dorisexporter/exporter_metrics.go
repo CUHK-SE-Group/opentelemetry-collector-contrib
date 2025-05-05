@@ -5,6 +5,7 @@ package dorisexporter // import "github.com/open-telemetry/opentelemetry-collect
 
 import (
 	"context"
+	_ "embed" // for SQL file embedding
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,9 @@ var ddls = []string{
 	metricsExponentialHistogramDDL,
 	metricsSummaryDDL,
 }
+
+//go:embed sql/metrics_view.sql
+var metricsView string
 
 type metricsExporter struct {
 	*commonExporter
@@ -55,10 +59,27 @@ func (e *metricsExporter) start(ctx context.Context, host component.Host) error 
 		}
 
 		for _, ddlTemplate := range ddls {
-			ddl := fmt.Sprintf(ddlTemplate, e.cfg.Table.Metrics, e.cfg.propertiesStr())
+			ddl := fmt.Sprintf(ddlTemplate, e.cfg.Metrics, e.cfg.propertiesStr())
 			_, err = conn.ExecContext(ctx, ddl)
 			if err != nil {
 				return err
+			}
+		}
+
+		models := []metricModel{
+			&metricModelGauge{},
+			&metricModelSum{},
+			&metricModelHistogram{},
+			&metricModelExponentialHistogram{},
+			&metricModelSummary{},
+		}
+
+		for _, model := range models {
+			table := e.cfg.Metrics + model.tableSuffix()
+			view := fmt.Sprintf(metricsView, table, table)
+			_, err = conn.ExecContext(ctx, view)
+			if err != nil {
+				e.logger.Warn("failed to create materialized view", zap.Error(err))
 			}
 		}
 	}
@@ -158,6 +179,11 @@ func (e *metricsExporter) pushMetricData(ctx context.Context, md pmetric.Metrics
 		if ok {
 			serviceName = v.AsString()
 		}
+		serviceInstance := ""
+		v, ok = resourceAttributes.Get(semconv.AttributeServiceInstanceID)
+		if ok {
+			serviceInstance = v.AsString()
+		}
 
 		for j := 0; j < resourceMetric.ScopeMetrics().Len(); j++ {
 			scopeMetric := resourceMetric.ScopeMetrics().At(j)
@@ -167,6 +193,7 @@ func (e *metricsExporter) pushMetricData(ctx context.Context, md pmetric.Metrics
 
 				dm := &dMetric{
 					ServiceName:        serviceName,
+					ServiceInstanceID:  serviceInstance,
 					MetricName:         metric.Name(),
 					MetricDescription:  metric.Description(),
 					MetricUnit:         metric.Unit(),
@@ -220,7 +247,7 @@ func (e *metricsExporter) pushMetricDataInternal(ctx context.Context, metrics me
 		return err
 	}
 
-	req, err := streamLoadRequest(ctx, e.cfg, e.cfg.Table.Metrics+metrics.tableSuffix(), marshal, metrics.label())
+	req, err := streamLoadRequest(ctx, e.cfg, e.cfg.Metrics+metrics.tableSuffix(), marshal, metrics.label())
 	if err != nil {
 		return err
 	}
@@ -292,5 +319,5 @@ func (e *metricsExporter) getExemplarValue(ep pmetric.Exemplar) float64 {
 }
 
 func (e *metricsExporter) generateMetricLabel(m metricModel) string {
-	return generateLabel(e.cfg, e.cfg.Table.Metrics+m.tableSuffix())
+	return generateLabel(e.cfg, e.cfg.Metrics+m.tableSuffix())
 }

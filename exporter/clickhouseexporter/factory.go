@@ -20,6 +20,8 @@ import (
 	"go.opentelemetry.io/collector/exporter/xexporter"
 )
 
+const clickhouseDriverName = "clickhouse"
+
 // NewFactory creates a factory for ClickHouse exporter.
 func NewFactory() exporter.Factory {
 	return xexporter.NewFactory(
@@ -35,6 +37,7 @@ func NewFactory() exporter.Factory {
 func createDefaultConfig() component.Config {
 	return &Config{
 		collectorVersion: "unknown",
+		driverName:       clickhouseDriverName,
 
 		TimeoutSettings:  exporterhelper.NewDefaultTimeoutConfig(),
 		QueueSettings:    exporterhelper.NewDefaultQueueConfig(),
